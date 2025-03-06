@@ -23,9 +23,24 @@ class Entity:
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
 
-        print("Private Key:\n", private_pem.decode())  # Save this securely
+        # print("Private Key:\n", private_pem.decode())  # Save this securely
         print("Public Key:\n", public_pem.decode())    # Share this with sender
         return private_pem.decode(), public_pem.decode()
+    
+    def save_private_key(self, filename="private.pem"):
+        with open(filename, "wb") as f:
+            f.write(self.private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.BestAvailableEncryption(b"mypassword"),
+            ))
+
+    def save_public_key(self, filename="public.pem"):
+        with open(filename, "wb") as f:
+            f.write(self.public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            ))
 
 
 class Actions:
@@ -73,11 +88,35 @@ class Actions:
     def compare_hashing(self,stored_hash,message):
         input_hash = hashlib.sha256(message.encode()).hexdigest()
         if input_hash == stored_hash:
-            print("Password Match!")
+            print("Hash Match!")
             return True
         else:
-            print("Wrong Password!")
+            print("Wrong Hash!")
             return False
+
+
+    def sign_message(self, message):
+        signature = self.private_key.sign(
+            message.encode(),
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256()
+        )
+        return signature
+
+    def verify_signature(self, message, signature):
+        try:
+            self.public_key.verify(
+                signature,
+                message.encode(),
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256()
+            )
+            print("✅ Signature is valid!")
+            return True
+        except:
+            print("❌ Signature is INVALID!")
+            return False
+
 
 def main():
     # **Testing**
