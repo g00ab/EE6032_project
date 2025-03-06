@@ -1,0 +1,53 @@
+import socket
+import threading
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+
+clients = {}
+
+def handle_client(client_socket, addr):
+    """Authenticate client and forward encrypted messages."""
+    print(f"Client {addr} connected.")
+
+    try:
+        # Step 1: Receive client's public key
+        client_public_key_pem = client_socket.recv(2048)
+        client_public_key = serialization.load_pem_public_key(client_public_key_pem)
+        
+        # Step 2: Store the client's public key and socket
+        clients[client_socket] = client_public_key
+        print(f"Client {addr} authenticated.")
+
+        while True:
+            # Step 3: Forward encrypted messages to all clients
+            encrypted_message = client_socket.recv(4096)
+            if not encrypted_message:
+                break
+            
+            # Step 4: Relay message to all other clients
+            for client in clients:
+                if client != client_socket:
+                    client.send(encrypted_message)
+
+    except Exception as e:
+        print(f"Error with client {addr}: {e}")
+    
+    finally:
+        print(f"Client {addr} disconnected.")
+        del clients[client_socket]
+        client_socket.close()
+
+def start_server():
+    """Start the server and listen for client connections."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("0.0.0.0", 9999))
+    server.listen(5)
+
+    print("Server listening on port 9999... (Authentication only)")
+
+    while True:
+        client_socket, addr = server.accept()
+        threading.Thread(target=handle_client, args=(client_socket, addr)).start()
+
+if __name__ == "__main__":
+    start_server()
