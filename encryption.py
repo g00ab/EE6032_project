@@ -63,6 +63,21 @@ class Actions:
         )
         print("Decrypted Message:", plaintext.decode())
         return plaintext
+    
+
+    def hashing(self, message):
+        input_hash = hashlib.sha256(message.encode()).hexdigest()
+        print(f'input hash: {input_hash}')
+        return (input_hash,message)
+    
+    def compare_hashing(self,stored_hash,message):
+        input_hash = hashlib.sha256(message.encode()).hexdigest()
+        if input_hash == stored_hash:
+            print("Password Match!")
+            return True
+        else:
+            print("Wrong Password!")
+            return False
 
 def main():
     # **Testing**
