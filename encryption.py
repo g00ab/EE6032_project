@@ -49,29 +49,10 @@ class Actions:
         self.public_key = entity.public_key    # Get public key from Entity
         self.ciphertext = None  # Store encrypted message
 
-    # def encrypt(self, message):
-    #     """Encrypts a message using RSA public key"""
-    #     self.ciphertext = self.public_key.encrypt(
-    #         message,
-    #         padding.OAEP(
-    #             mgf=padding.MGF1(algorithm=hashes.SHA256()),
-    #             algorithm=hashes.SHA256(),
-    #             label=None
-    #         )
-    #     )
-    #     print("Encrypted Message:", self.ciphertext)
-    #     return self.ciphertext
-    
     def encrypt(self, message):
-        """Encrypts a message and signs it using RSA"""
-        signature = self.sign_message(message.decode())  # Sign the message
-
-        # Combine the message and signature
-        message_with_signature = message + b"||" + signature
-
-        # Encrypt the combined message
+        """Encrypts a message using RSA public key"""
         self.ciphertext = self.public_key.encrypt(
-            message_with_signature,
+            message,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
@@ -81,44 +62,22 @@ class Actions:
         print("Encrypted Message:", self.ciphertext)
         return self.ciphertext
 
-    # def decrypt(self):
-    #     """Decrypts the message using RSA private key"""
-    #     if self.ciphertext is None:
-    #         print("No message to decrypt!")
-    #         return None
+    def decrypt(self):
+        """Decrypts the message using RSA private key"""
+        if self.ciphertext is None:
+            print("No message to decrypt!")
+            return None
 
-    #     plaintext = self.private_key.decrypt(
-    #         self.ciphertext,
-    #         padding.OAEP(
-    #             mgf=padding.MGF1(algorithm=hashes.SHA256()),
-    #             algorithm=hashes.SHA256(),
-    #             label=None
-    #         )
-    #     )
-    #     print("Decrypted Message:", plaintext.decode())
-    #     return plaintext
-    
-    def decrypt(self, encrypted_message):
-        """Decrypts a message and verifies its signature"""
         plaintext = self.private_key.decrypt(
-            encrypted_message,
+            self.ciphertext,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None
             )
         )
-
-        # Split message and signature
-        message, signature = plaintext.rsplit(b'||', 1)
-
-        # Verify the signature
-        if self.verify_signature(message.decode(), signature):
-            print("Decrypted and Verified Message:", message.decode())
-            return message
-        else:
-            print("Message Integrity Compromised!")
-            return None
+        print("Decrypted Message:", plaintext.decode())
+        return plaintext
     
 
     def hashing(self, message):

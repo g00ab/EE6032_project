@@ -25,24 +25,6 @@ def receive_messages(client, actions):
             # Handle cases where the message could not be decrypted.
             print(f"Received an encrypted message but could not decrypt: {encrypted_message}")
 
-def authenticate(client, actions):
-    """Authenticate client with the server"""
-    auth_message = "AUTH_REQUEST"
-    signature = actions.sign_message(auth_message)
-
-    # Send authentication request (message + signature)
-    client.send(auth_message.encode() + b"||" + signature)
-
-    # Wait for server approval
-    response = client.recv(1024).decode()
-    if response == "AUTH_SUCCESS":
-        print("✅ Authentication Successful!")
-        return True
-    else:
-        print("❌ Authentication Failed!")
-        return False
-
-
 def main():
     """
     Main function to set up the client, initiate the connection, and handle message input and sending.

@@ -1,59 +1,35 @@
 import socket
 import threading
-import encryption
-entity = encryption.Entity()  # Create an encryption entity (assumed to hold keys or configurations).
-actions = encryption.Actions(entity)
 
 clients = []  # List to track connected clients
 
-# def handle_client(client_socket, client_address):
-#     """
-#     Receive messages from a client and forward them to all other clients.
-#     """
-#     print(f"Client {client_address} connected.")
-#     clients.append(client_socket)
-
-#     while True:
-#         try:
-#             # Receive encrypted message
-#             message = client_socket.recv(1024)
-
-#             if not message:
-#                 break  # Client disconnected
-
-#             print(f"Forwarding encrypted message from {client_address}")
-
-#             # Forward the encrypted message to all other clients
-#             forward_message(client_socket, message)
-
-#         except:
-#             break
-
-#     # Remove client from list and close connection
-#     print(f"Client {client_address} disconnected.")
-#     clients.remove(client_socket)
-#     client_socket.close()
-
 def handle_client(client_socket, client_address):
-    """Handle authentication and message forwarding"""
+    """
+    Receive messages from a client and forward them to all other clients.
+    """
     print(f"Client {client_address} connected.")
-
-    # Receive authentication request
-    auth_request = client_socket.recv(1024)
-    auth_message, signature = auth_request.rsplit(b"||", 1)
-
-    # Verify client identity
-    if not actions.verify_signature(auth_message.decode(), signature):
-        print("❌ Authentication Failed! Disconnecting client.")
-        client_socket.close()
-        return
-
-    # Send authentication success response
-    client_socket.send("AUTH_SUCCESS".encode())
-
-    # Add client to the list
     clients.append(client_socket)
 
+    while True:
+        try:
+            # Receive encrypted message
+            message = client_socket.recv(1024)
+
+            if not message:
+                break  # Client disconnected
+
+            print(f"Forwarding encrypted message from {client_address}")
+
+            # Forward the encrypted message to all other clients
+            forward_message(client_socket, message)
+
+        except:
+            break
+
+    # Remove client from list and close connection
+    print(f"Client {client_address} disconnected.")
+    clients.remove(client_socket)
+    client_socket.close()
 
 def forward_message(sender_socket, message):
     """
