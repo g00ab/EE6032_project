@@ -1,132 +1,122 @@
+#enryption.py
 import hashlib
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import hashes
+import socket
+from cryptography.hazmat.primitives import serialization, hashes, hmac
+from cryptography.hazmat.primitives.asymmetric import dh, rsa, padding
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import os
+import pickle
 
 class Entity:
     def __init__(self):
-        # Generate RSA key pair
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        self.public_key = self.private_key.public_key()  # Extract public key
+        self.public_key = self.private_key.public_key()
 
     def key_generation(self):
-        """Export keys in PEM format"""
         private_pem = self.private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-
         public_pem = self.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-
-        # print("Private Key:\n", private_pem.decode())  # Save this securely
-        print("Public Key:\n", public_pem.decode())    # Share this with sender
         return private_pem.decode(), public_pem.decode()
-    
-    def save_private_key(self, filename="private.pem"):
-        with open(filename, "wb") as f:
-            f.write(self.private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.BestAvailableEncryption(b"mypassword"),
-            ))
-
-    def save_public_key(self, filename="public.pem"):
-        with open(filename, "wb") as f:
-            f.write(self.public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo,
-            ))
-
 
 class Actions:
-    def __init__(self, entity):
-        self.private_key = entity.private_key  # Get private key from Entity
-        self.public_key = entity.public_key    # Get public key from Entity
-        self.ciphertext = None  # Store encrypted message
+    def __init__(self, private_key):
+        self.private_key = private_key
+        self.public_key = private_key.public_key()
+        self.ciphertext = None
 
     def encrypt(self, message):
-        """Encrypts a message using RSA public key"""
+        """Encrypt a message and sign it."""
+        signature = self.sign_message(message.decode())
+        message_with_signature = message + b"||" + signature
         self.ciphertext = self.public_key.encrypt(
-            message,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
+            message_with_signature,
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
         )
-        print("Encrypted Message:", self.ciphertext)
         return self.ciphertext
 
-    def decrypt(self):
-        """Decrypts the message using RSA private key"""
-        if self.ciphertext is None:
-            print("No message to decrypt!")
+    def decrypt(self, encrypted_message):
+        """Decrypt a message and verify its signature."""
+        plaintext = self.private_key.decrypt(
+            encrypted_message,
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+        )
+        message, signature = plaintext.rsplit(b'||', 1)
+        if self.verify_signature(message.decode(), signature):
+            return message
+        else:
+            print("Message Integrity Compromised!")
             return None
 
-        plaintext = self.private_key.decrypt(
-            self.ciphertext,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-        print("Decrypted Message:", plaintext.decode())
-        return plaintext
-    
-
-    def hashing(self, message):
-        input_hash = hashlib.sha256(message.encode()).hexdigest()
-        print(f'input hash: {input_hash}')
-        return (input_hash,message)
-    
-    def compare_hashing(self,stored_hash,message):
-        input_hash = hashlib.sha256(message.encode()).hexdigest()
-        if input_hash == stored_hash:
-            print("Hash Match!")
-            return True
-        else:
-            print("Wrong Hash!")
-            return False
-
-
     def sign_message(self, message):
+        encoded_message = message.strip().encode('utf-8')
+        print(f"🔍 [DEBUG] Message before signing: {message}")
+        print(f"🔍 [DEBUG] Encoded message (before signing): {encoded_message}")
+
         signature = self.private_key.sign(
-            message.encode(),
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            encoded_message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()), 
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
             hashes.SHA256()
         )
+
+        print(f"✅ [DEBUG] Signature (binary): {signature}")
+        print(f"✅ [DEBUG] Signature (hex): {signature.hex()}")
         return signature
 
-    def verify_signature(self, message, signature):
+    def verify_signature(self, public_key, message, signature):
         try:
-            self.public_key.verify(
+            encoded_message = message.strip().encode('utf-8')
+            print(f"🔍 [DEBUG] Encoded message (for verification): {encoded_message}")
+            print(f"🔍 [DEBUG] Signature received (binary): {signature}")
+            print(f"🔍 [DEBUG] Signature received (hex): {signature.hex()}")
+
+            public_key.verify(
                 signature,
-                message.encode(),
-                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                encoded_message,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.AUTO
+                ),
                 hashes.SHA256()
             )
-            print("✅ Signature is valid!")
+            print("✅ Signature Verified Successfully!")
             return True
-        except:
-            print("❌ Signature is INVALID!")
+        except Exception as e:
+            print(f"❌ Signature Verification Failed: {e}")
             return False
+    # for session key
 
+    def generate_dh_parameters(self):
+        parameters = dh.generate_parameters(generator=2, key_size=2048, backend=default_backend())
+        self.diffie_hellman_parameters = parameters
+        return parameters.parameter_bytes(serialization.Encoding.PEM, serialization.ParameterFormat.PKCS3)
 
-def main():
-    # **Testing**
-    entity = Entity()  # Create entity with keys
-    entity.key_generation()  # Generate and display keys
+    def generate_dh_public_key(self):
+        private_key = self.diffie_hellman_parameters.generate_private_key()
+        self.private_key_dh = private_key
+        return private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
 
-    actions = Actions(entity)  # Pass entity to actions
-    cipher_text = actions.encrypt(b"Confidential message")  # Encrypt a message
-    actions.decrypt()  # Decrypt the message
-
-
-if __name__ == '__main__':
-    main()
+    def exchange_shared_key(self, peer_public_key):
+        # Load the peer's public key from PEM format
+        peer_key = serialization.load_pem_public_key(peer_public_key, backend=default_backend())
+        
+        # Ensure the peer's key is a valid Diffie-Hellman public key
+        if not isinstance(peer_key, dh.DHPublicKey):
+            raise TypeError("The peer public key must be a Diffie-Hellman public key.")
+        
+        # Perform the key exchange using the Diffie-Hellman private key and peer's public key
+        shared_key = self.private_key_dh.exchange(peer_key)
+        
+        # Store and return the shared key
+        self.shared_key = shared_key
+        return self.shared_key

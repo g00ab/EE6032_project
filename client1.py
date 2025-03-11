@@ -1,63 +1,75 @@
-import socket  
-import encryption  
-import threading 
+#client1.py
+import socket
+from encryption import Entity, Actions
+from cryptography.hazmat.primitives import serialization
+import pickle
 
-def receive_messages(client, actions):
-    """
-    Function to receive and decrypt messages from the server in a separate thread.
-    Parameters:
-        client: The connected client socket.
-        actions: The encryption actions instance for encryption/decryption.
-    """
+def load_private_key(filename):
+    with open(filename, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=None  # No password needed
+        )
+    return private_key
+
+def client_program():
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect(('127.0.0.1', 9996))
+
+    client_socket.send(b"client1")
+
+    private_key = load_private_key("client1_private.key")
+    actions = Actions(private_key)  # Pass the loaded private key to Actions
+
+    auth_message = "AUTH_REQUEST"
+    print(f"🔍 [DEBUG] Auth Message Sent: {auth_message}")
+
+    signature = actions.sign_message(auth_message)
+    print(f"🔍 [DEBUG] Signature Sent (hex): {signature.hex()}")
+
+    client_socket.send(f"{auth_message}||".encode('utf-8') + signature)
+
+    response = client_socket.recv(1024).decode()
+    if response != "AUTH_SUCCESS":
+        print(response)
+        print("❌ Authentication Failed!")
+        client_socket.close()
+        return
+
+    print("✅ Authentication Successful!")
+
+    # Step 2: Establish Session Key (Kabc) using Diffie-Hellman Key Exchange
+    dh_params = actions.generate_dh_parameters()
+    print(f"🔍 [DEBUG] DH Parameters Generated: {dh_params}")
+    client_socket.send(pickle.dumps(dh_params))  # Send DH parameters to the server
+
+    dh_public_key = actions.generate_dh_public_key()
+    print(f"🔍 [DEBUG] DH Public Key Generated: {dh_public_key.hex()}")
+    client_socket.send(dh_public_key)  # Send DH public key to the server
+
+    # Receive public keys from other entities (B and C)
+    peer_public_keys = []
+    for _ in range(2):
+        peer_public_key = client_socket.recv(4096)
+        print(f"🔍 [DEBUG] Received Peer Public Key: {peer_public_key.hex()}")
+        peer_public_keys.append(peer_public_key)
+
+    # Exchange and establish shared key (Kabc)
+    #for peer_public_key in peer_public_keys:
+    #    shared_key = actions.exchange_shared_key(peer_public_key)
+    #    print(f"🔍 [DEBUG] Shared Key Established: {shared_key.hex()}")
+
+    print("✅ Session Key Established!")
+
     while True:
-        # Receive an encrypted message from the server.
-        encrypted_message = client.recv(1024)
-        
-        # Check if the connection was closed or no message was received.
-        if not encrypted_message:
-            break
-
-        try:
-            # Attempt to decrypt the received message and decode it to a UTF-8 string.
-            decrypted_message = actions.decrypt(encrypted_message).decode('utf-8')
-            print(f"Decrypted message: {decrypted_message}")  # Display the decrypted message.
-        except:
-            # Handle cases where the message could not be decrypted.
-            print(f"Received an encrypted message but could not decrypt: {encrypted_message}")
-
-def main():
-    """
-    Main function to set up the client, initiate the connection, and handle message input and sending.
-    """
-    # Create a client socket using IPv4 and TCP protocol.
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
-    # Connect to the server using localhost (127.0.0.1) and port 9996.
-    client.connect(('127.0.0.1', 9996))
-
-    # Initialize the encryption entity and actions for secure communication.
-    entity = encryption.Entity()  # Create an encryption entity (assumed to hold keys or configurations).
-    actions = encryption.Actions(entity)  # Create an encryption actions instance.
-
-    # Start a new thread for receiving messages, so the main thread can handle sending.
-    receive_thread = threading.Thread(target=receive_messages, args=(client, actions))
-    receive_thread.start()
-
-    while True:
-        # Prompt the user to enter a message.
         message = input("Enter message: ")
-
-        # Exit the loop if the user types 'exit'.
         if message.lower() == 'exit':
             break
 
-        # Encrypt the user’s message and send it to the server.
-        cipher_text = actions.encrypt(message.encode('utf-8'))  # Convert the message to bytes and encrypt it.
-        client.send(cipher_text)  # Send the encrypted message.
+        cipher_text = actions.encrypt(message.encode('utf-8'))
+        client_socket.send(cipher_text)
 
-    # Close the client socket after exiting the loop.
-    client.close()
+    client_socket.close()
 
-# Check if the script is being run directly (not imported).
 if __name__ == "__main__":
-    main()  # Execute the main function.
+    client_program()
