@@ -97,11 +97,8 @@ class Actions:
 
     def sign_message(self, message):
         signature = self.private_key.sign(
-            encoded_message,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()), 
-                salt_length=padding.PSS.MAX_LENGTH
-            ), 
+            message.encode(),
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
             hashes.SHA256()
         )
         return signature
