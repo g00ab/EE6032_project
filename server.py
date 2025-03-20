@@ -1,35 +1,57 @@
+#server.py
 import socket
 import threading
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+import pickle
+from cryptography.hazmat.primitives import serialization
+import time 
+clients = []
+client_certificates = {}
+authenticated_clients = 0  # Track number of authenticated clients
 
-clients = []  # List to track connected clients
-
-def handle_client(client_socket, client_address):
-    """
-    Receive messages from a client and forward them to all other clients.
-    """
-    print(f"Client {client_address} connected.")
-    clients.append(client_socket)
-
-    while True:
+def load_certificates():
+    for client_id in ["server", "client1", "client2", "client3"]:
         try:
-            # Receive encrypted message
-            message = client_socket.recv(1024)
+            # Read the PEM file
+            with open(f"{client_id}_cert.pem", "rb") as f:
+                certificate_data = f.read()  # The raw PEM-encoded certificate
 
-            if not message:
-                break  # Client disconnected
+            # Load the certificate object
+            client_certificates[client_id] = x509.load_pem_x509_certificate(certificate_data)
 
-            print(f"Forwarding encrypted message from {client_address}")
+            # Print debug message
+            print(f"✅ [DEBUG] Certificate loaded for {client_id}")
+            
+            # Print the raw PEM certificate data
+            print(f"cert id {client_id} cert:\n{certificate_data.decode('utf-8')}")
 
-            # Forward the encrypted message to all other clients
-            forward_message(client_socket, message)
+        except FileNotFoundError:
+            # Print error message for missing file
+            print(f"❌ [ERROR] Missing certificate for {client_id}")
 
-        except:
-            break
+def verify_signature(public_key, message, signature):
+    try:
+        encoded_message = message.strip().encode('utf-8')
+        print(f"🔍 [DEBUG] Encoded message (for verification): {encoded_message}")
+        print(f"🔍 [DEBUG] Signature received (binary): {signature}")
+        print(f"🔍 [DEBUG] Signature received (hex): {signature.hex()}")
 
-    # Remove client from list and close connection
-    print(f"Client {client_address} disconnected.")
-    clients.remove(client_socket)
-    client_socket.close()
+        public_key.verify(
+            signature,
+            encoded_message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.AUTO
+            ),
+            hashes.SHA256()
+        )
+        print("✅ Signature Verified Successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Signature Verification Failed: {e}")
+        return False
 
 def forward_message(sender_socket, message):
     """
@@ -42,38 +64,158 @@ def forward_message(sender_socket, message):
             except:
                 client.close()
                 clients.remove(client)
+                
+def handle_authentication(client_socket, client_id):
+    global authenticated_clients  # To track the number of authenticated clients
+    try:
+        client_certificate = client_certificates[client_id]
+        client_public_key = client_certificate.public_key()
+
+        auth_data = client_socket.recv(4096).split(b"||")
+        auth_message, signature = auth_data[0].decode(), auth_data[1]
+
+        print(f"🔍 [DEBUG] Auth Message Received: {auth_message}")
+        print(f"🔍 [DEBUG] Signature Received: {signature.hex()}")
+
+        if not verify_signature(client_public_key, auth_message, signature):
+            print(f"❌ Authentication Failed for {client_id}")
+            client_socket.send(b"AUTH_FAILED")
+            client_socket.close()
+            return False
+
+        client_socket.send(b"AUTH_SUCCESS")
+        print(f"✅ Client {client_id} authenticated successfully.")
+        authenticated_clients += 1  # Increment authenticated client count
+
+        
+        # Handle public key request from clients########
+        # Handle public key request from clients
+        #handle_public_key_request(client_socket, client_id)
+
+
+        return True
+    except Exception as e:
+        print(f"❌ Authentication error for {client_id}: {e}")
+        return False
+
+def handle_public_key_request(client_socket, client_id):
+    try:
+        request_data = client_socket.recv(1024).decode().strip()
+        
+        if request_data.startswith("REQ_KEY:"):
+            requested_client_id = request_data.split(":")[1].strip()
+
+            # Ensure the requested ID is NOT the requester's ID
+            #if requested_client_id == client_id:
+             #   client_socket.send(b"ERROR: You cannot request your own public key.")
+              #  return
+            
+            if requested_client_id in client_certificates:
+                requested_public_key = client_certificates[requested_client_id].public_key()
+                pem_data = requested_public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+                client_socket.send(pem_data)
+            else:
+                client_socket.send(b"ERROR: Public key not found.")
+    except Exception as e:
+        print(f"❌ Error handling public key request: {e}")
+
+
+
+
+def handle_client(client_socket, client_address):
+    """
+    Receive messages from a client, handle public key requests,
+    and forward session key parts and encrypted messages.
+    """
+    global ready_clients  # List to track clients that are ready for key exchang
+    print(f"Client {client_address} connected.")
+    print(f"*****client to append{client_socket}")
+    clients.append(client_socket)
+
+    while True:
+        try:
+            # Receive data from the client
+            raw_request_data = client_socket.recv(4096)  # Increased buffer size to handle larger messages
+            
+            if not raw_request_data:
+                break  # Client disconnected
+
+            # Decode and process textual requests
+            try:
+                request_data = raw_request_data.decode('utf-8').strip()
+            except UnicodeDecodeError:
+                request_data = None  # Non-textual data (e.g., encrypted or binary data)
+
+            if request_data:
+                if request_data.startswith("REQ_KEY:"):
+                    # Handle public key request
+                    requested_client_id = request_data.split(":")[1].strip()
+                    if requested_client_id in client_certificates:
+                        requested_public_key = client_certificates[requested_client_id].public_key()
+                        pem_data = requested_public_key.public_bytes(
+                            encoding=serialization.Encoding.PEM,
+                            format=serialization.PublicFormat.SubjectPublicKeyInfo
+                        )
+                        client_socket.send(pem_data)
+                    else:
+                        client_socket.send(b"ERROR: Public key not found.")
+                else:
+                    print(f"🔍 [DEBUG] Received unsupported text request: {request_data}")
+            else:
+                # Binary data processing (session key parts or encrypted messages)
+                if raw_request_data.startswith(b"KEY_PART:"):
+                    # Forward session key parts to all clients except the sender
+                    print(f"🔑 [DEBUG] Forwarding session key part from {client_address}")
+                    forward_message(client_socket, raw_request_data)
+                else:
+                    # Assume it's an encrypted message and forward it
+                    print(f"🔍 [DEBUG] Forwarding encrypted message from {client_address}")
+                    forward_message(client_socket, raw_request_data)
+
+        except Exception as e:
+            print(f"❌ Error handling client {client_address}: {e}")
+            break
+
+    # Cleanup on disconnect
+    print(f"Client {client_address} disconnected.")
+    clients.remove(client_socket)
+    client_socket.close()
+
 
 def start_server(port):
-    """
-    Start a server to handle multiple clients.
-    """
+    load_certificates()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(('0.0.0.0', port))
     server.listen(5)
-
-    print(f"Server listening on port {port}")
+    print(f"✅ Server listening on port {port}")
 
     while True:
         client_socket, addr = server.accept()
         print(f"Accepted connection from {addr}")
+        client_id = client_socket.recv(1024).decode()
 
-        # Start a new thread for each client
-        client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
-        client_handler.start()
+        if handle_authentication(client_socket, client_id):
+            #clients[client_id] = client_socket
+            # Check if 3 devices are authenticated
+            
+            client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
+            client_handler.start()
+            time.sleep(1)
+            if authenticated_clients == 3:
+                print("✅ All 3 clients authenticated. Broadcasting key exchange signal.")
+                for client in clients:
+                    client.send(b"START_KEY_EXCHANGE")
+                    print(f"Client ready {client}")
+                #break  # Ensure the flag is sent only once   
 
-# Run the server
 def main():
-    """
-    Start multiple servers on different ports.
-    """
-    # Define the ports to listen on
-    ports = [9996, 9998, 9997]
-    
-    # Start a server on each port in a separate thread
+    ports = [9996, 9997, 9998]
     for port in ports:
         server_thread = threading.Thread(target=start_server, args=(port,))
         server_thread.start()
 
 if __name__ == "__main__":
-    # Call the main function
     main()
