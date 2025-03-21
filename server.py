@@ -4,7 +4,6 @@ import threading
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-import pickle
 from cryptography.hazmat.primitives import serialization
 import time 
 clients = []
@@ -87,12 +86,6 @@ def handle_authentication(client_socket, client_id):
         print(f"✅ Client {client_id} authenticated successfully.")
         authenticated_clients += 1  # Increment authenticated client count
 
-        
-        # Handle public key request from clients########
-        # Handle public key request from clients
-        #handle_public_key_request(client_socket, client_id)
-
-
         return True
     except Exception as e:
         print(f"❌ Authentication error for {client_id}: {e}")
@@ -104,11 +97,6 @@ def handle_public_key_request(client_socket, client_id):
         
         if request_data.startswith("REQ_KEY:"):
             requested_client_id = request_data.split(":")[1].strip()
-
-            # Ensure the requested ID is NOT the requester's ID
-            #if requested_client_id == client_id:
-             #   client_socket.send(b"ERROR: You cannot request your own public key.")
-              #  return
             
             if requested_client_id in client_certificates:
                 requested_public_key = client_certificates[requested_client_id].public_key()
@@ -198,9 +186,7 @@ def start_server(port):
         client_id = client_socket.recv(1024).decode()
 
         if handle_authentication(client_socket, client_id):
-            #clients[client_id] = client_socket
-            # Check if 3 devices are authenticated
-            
+
             client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
             client_handler.start()
             time.sleep(1)
