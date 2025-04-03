@@ -6,7 +6,7 @@ import hashlib
 import os
 
 # Import your Entity and Actions classes
-from encryption import Entity, Actions  # Replace 'your_module' with your actual filename
+from signature import Entity, Actions  # Replace 'your_module' with your actual filename
 
 def test_rsa_encryption():
     print("\n🔹 **TESTING RSA ENCRYPTION & DECRYPTION**")

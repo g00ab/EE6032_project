@@ -6,6 +6,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import serialization
 import time 
+from cryptos_utils import *
+
 clients = []
 client_certificates = {}
 authenticated_clients = 0  # Track number of authenticated clients
@@ -33,6 +35,7 @@ def load_certificates():
 def verify_signature(public_key, message, signature):
     try:
         encoded_message = message.strip().encode('utf-8')
+        
         print(f"🔍 [DEBUG] Encoded message (for verification): {encoded_message}")
         print(f"🔍 [DEBUG] Signature received (binary): {signature}")
         print(f"🔍 [DEBUG] Signature received (hex): {signature.hex()}")
@@ -63,26 +66,46 @@ def forward_message(sender_socket, message):
             except:
                 client.close()
                 clients.remove(client)
-                
-def handle_authentication(client_socket, client_id):
+
+def strip_outer_bytes(data):
+    # Check if the data is double-encoded
+    if isinstance(data, bytes):
+        # Decode the outer layer
+        decoded_data = data.decode('utf-8')
+
+        # Check if the inner data is still encoded as bytes (e.g., starts with b')
+        if decoded_data.startswith("b'") or decoded_data.startswith('b"'):
+            # Strip the b'' or b"" wrapping
+            inner_data = eval(decoded_data)  # Convert string representation back to bytes
+            return inner_data
+
+    return data  # Return data unchanged if not double-encoded
+                  
+def handle_authentication(client_socket, server_private_key, client_id):
     global authenticated_clients  # To track the number of authenticated clients
     try:
         client_certificate = client_certificates[client_id]
         client_public_key = client_certificate.public_key()
-
         auth_data = client_socket.recv(4096).split(b"||")
-        auth_message, signature = auth_data[0].decode(), auth_data[1]
+
+        # Extract and decrypt the auth message (don't decode it yet)
+        encrypted_auth_message = auth_data[0]
+        signature = auth_data[1]
+
+        # Decrypt the auth message using the server's private key
+        auth_message = decrypt(server_private_key, encrypted_auth_message)
 
         print(f"🔍 [DEBUG] Auth Message Received: {auth_message}")
         print(f"🔍 [DEBUG] Signature Received: {signature.hex()}")
 
-        if not verify_signature(client_public_key, auth_message, signature):
+        if not verify_signature(client_public_key, auth_message.decode(), signature):
             print(f"❌ Authentication Failed for {client_id}")
             client_socket.send(b"AUTH_FAILED")
             client_socket.close()
             return False
 
-        client_socket.send(b"AUTH_SUCCESS")
+        response_message =b"AUTH_SUCCESS"
+        client_socket.send(encrypt(client_public_key, response_message))
         print(f"✅ Client {client_id} authenticated successfully.")
         authenticated_clients += 1  # Increment authenticated client count
 
@@ -90,26 +113,6 @@ def handle_authentication(client_socket, client_id):
     except Exception as e:
         print(f"❌ Authentication error for {client_id}: {e}")
         return False
-
-def handle_public_key_request(client_socket, client_id):
-    try:
-        request_data = client_socket.recv(1024).decode().strip()
-        
-        if request_data.startswith("REQ_KEY:"):
-            requested_client_id = request_data.split(":")[1].strip()
-            
-            if requested_client_id in client_certificates:
-                requested_public_key = client_certificates[requested_client_id].public_key()
-                pem_data = requested_public_key.public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo
-                )
-                client_socket.send(pem_data)
-            else:
-                client_socket.send(b"ERROR: Public key not found.")
-    except Exception as e:
-        print(f"❌ Error handling public key request: {e}")
-
 
 
 
@@ -126,7 +129,7 @@ def handle_client(client_socket, client_address):
     while True:
         try:
             # Receive data from the client
-            raw_request_data = client_socket.recv(4096)  # Increased buffer size to handle larger messages
+            raw_request_data = client_socket.recv(4096) 
             
             if not raw_request_data:
                 break  # Client disconnected
@@ -138,7 +141,7 @@ def handle_client(client_socket, client_address):
                 request_data = None  # Non-textual data (e.g., encrypted or binary data)
 
             if request_data:
-                if request_data.startswith("REQ_KEY:"):
+                if request_data.startswith("REQ_CERT:"):
                     # Handle public key request
                     requested_client_id = request_data.split(":")[1].strip()
                     if requested_client_id in client_certificates:
@@ -179,13 +182,14 @@ def start_server(port):
     server.bind(('0.0.0.0', port))
     server.listen(5)
     print(f"✅ Server listening on port {port}")
-
+    server_private_key = load_private_key("server_private.key")
+    server_public_key = load_public_key_from_cert("server_cert.pem")
     while True:
         client_socket, addr = server.accept()
         print(f"Accepted connection from {addr}")
         client_id = client_socket.recv(1024).decode()
 
-        if handle_authentication(client_socket, client_id):
+        if handle_authentication(client_socket, server_private_key, client_id):
 
             client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
             client_handler.start()
@@ -193,9 +197,8 @@ def start_server(port):
             if authenticated_clients == 3:
                 print("✅ All 3 clients authenticated. Broadcasting key exchange signal.")
                 for client in clients:
-                    client.send(b"START_KEY_EXCHANGE")
-                    print(f"Client ready {client}")
-                #break  # Ensure the flag is sent only once   
+                    client.send(b"READY")
+                    print(f"Client ready {client}")   
 
 def main():
     ports = [9996, 9997, 9998]
